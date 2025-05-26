@@ -1,0 +1,7 @@
+
+{
+  "name": "RoboCoach: Roblox Lua Assistant",
+  "description": "RoboCoach is an AI assistant for Roblox Studio Lua game development. It helps with scripting, debugging console errors, and provides a chat interface to remember your project's context.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
