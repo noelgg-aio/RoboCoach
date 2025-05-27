@@ -79,10 +79,6 @@ const MessageBubble: React.FC<MessageBubbleProps> = ({ message }) => {
                {isUser ? message.text : displayedText}
              </p>
           )}
-          
-          {/* This condition was a bit complex, simplified if text is primary content */}
-          {/* Original: (message.text || (!isUser && !message.isLoading && message.text !== undefined)) */}
-          {/* Now handled by the more direct !message.isLoading && message.text condition above */}
 
           {message.code && <CodeBlock code={message.code} />}
           {message.isError && !message.text && <p className="text-red-300">An error occurred.</p>}

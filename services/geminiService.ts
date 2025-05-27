@@ -33,18 +33,42 @@ export const generateChatName = async (firstUserMessage: string): Promise<string
 };
 
 
-const parseLuaCodeBlocks = (text: string): { textBefore?: string, code?: string, textAfter?: string } => {
-  const codeBlockRegex = /```lua\s*([\s\S]*?)\s*```/s;
-  const match = text.match(codeBlockRegex);
+interface ParsedBlock {
+  type: 'text' | 'code';
+  content: string;
+}
 
-  if (match && match[1]) {
-    const code = match[1].trim();
-    const parts = text.split(match[0]); // Split by the full matched block
-    const textBefore = parts[0] ? parts[0].trim() : undefined;
-    const textAfter = parts[1] ? parts[1].trim() : undefined;
-    return { textBefore, code, textAfter };
+const parseLuaCodeBlocks = (text: string): ParsedBlock[] => {
+  const codeBlockRegex = /```lua\s*([\s\S]*?)\s*```/gs;
+  const blocks: ParsedBlock[] = [];
+  let lastIndex = 0;
+  let match;
+
+  while ((match = codeBlockRegex.exec(text)) !== null) {
+    // Add text before this code block (if any)
+    const textBefore = text.substring(lastIndex, match.index).trim();
+    if (textBefore) {
+      blocks.push({ type: 'text', content: textBefore });
+    }
+    
+    // Add the code block
+    blocks.push({ type: 'code', content: match[1].trim() });
+    
+    lastIndex = match.index + match[0].length;
   }
-  return { textBefore: text.trim() }; // No code block found
+  
+  // Add any remaining text after the last code block
+  const textAfter = text.substring(lastIndex).trim();
+  if (textAfter) {
+    blocks.push({ type: 'text', content: textAfter });
+  }
+  
+  // If no blocks were found, treat the entire text as a text block
+  if (blocks.length === 0 && text.trim()) {
+    blocks.push({ type: 'text', content: text.trim() });
+  }
+  
+  return blocks;
 };
 
 
@@ -84,36 +108,40 @@ export const processUserPrompt = async (
     });
     
     const responseText = response.text.trim();
-    const parsed = parseLuaCodeBlocks(responseText);
+    const parsedBlocks = parseLuaCodeBlocks(responseText);
 
-    if (parsed.textBefore) {
-      aiResponses.push({
-        id: `${currentTimestamp}-pretext`,
-        sender: 'ai',
-        text: parsed.textBefore,
-        timestamp: currentTimestamp,
-      });
-    }
-    if (parsed.code) {
-        aiResponses.push({
-        id: `${currentTimestamp}-code`,
-        sender: 'ai',
-        text: parsed.textBefore ? undefined : "Here's the Lua script:", // Add preamble if no textBefore
-        code: parsed.code,
-        timestamp: currentTimestamp + (parsed.textBefore ? 1 : 0),
-      });
-    }
-    if (parsed.textAfter) {
-        aiResponses.push({
-        id: `${currentTimestamp}-posttext`,
-        sender: 'ai',
-        text: parsed.textAfter,
-        timestamp: currentTimestamp + (parsed.textBefore ? 1 : 0) + (parsed.code ? 1 : 0),
-      });
-    }
-    // If nothing parsed but there was responseText (e.g. AI just said "OK", or an error explanation)
+    // Instead of creating multiple messages, combine them into one message
+    let combinedText = "";
+    let codeContent = "";
+    
+    // Process all blocks to extract code and combine text
+    parsedBlocks.forEach((block) => {
+      if (block.type === 'text') {
+        combinedText += (combinedText ? "\n\n" : "") + block.content;
+      } else if (block.type === 'code') {
+        // Save the first code block we find
+        if (!codeContent) {
+          codeContent = block.content;
+        } else {
+          // If there are multiple code blocks, add them to the text with markdown formatting
+          combinedText += (combinedText ? "\n\n" : "") + 
+            "```lua\n" + block.content + "\n```";
+        }
+      }
+    });
+    
+    // Create a single message with both text and code
+    aiResponses.push({
+      id: `${currentTimestamp}-combined`,
+      sender: 'ai',
+      text: combinedText || undefined,
+      code: codeContent || undefined,
+      timestamp: currentTimestamp,
+    });
+    
+    // If nothing parsed but there was responseText
     if (aiResponses.length === 0 && responseText) {
-        aiResponses.push({
+      aiResponses.push({
         id: `${currentTimestamp}-main`,
         sender: 'ai',
         text: responseText,

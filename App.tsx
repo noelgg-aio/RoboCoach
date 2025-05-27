@@ -4,7 +4,7 @@ import ChatView from './components/ChatView';
 import { Chat, Message } from './types';
 import { generateChatName, processUserPrompt } from './services/geminiService';
 import { API_KEY, NEW_CHAT_ROBOCOACH_WELCOME }  from './constants';
-import { isValidAccessKey, keysLastUpdated } from './services/accessKeys';
+import { isValidAccessKey, isKeyInUse, markKeyAsInUse, loadActiveKeysFromStorage, releaseKey, keysLastUpdated, validateUserKey } from './services/accessKeys';
 
 const App: React.FC = () => {
   const [chats, setChats] = useState<Chat[]>([]);
@@ -17,29 +17,39 @@ const App: React.FC = () => {
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [lastKeyCheck, setLastKeyCheck] = useState<number>(0);
 
+  // Load active keys when the app starts
+  useEffect(() => {
+    loadActiveKeysFromStorage();
+  }, []);
+
   // Check for saved access key in localStorage and validate it against current valid keys
   useEffect(() => {
     const validateSavedKey = () => {
       const savedKey = localStorage.getItem('robocoach-access-key');
       if (savedKey) {
-        // Check if the saved key is still in the valid keys list
-        if (isValidAccessKey(savedKey)) {
+        // Check if the key is still valid and belongs to this user
+        if (validateUserKey(savedKey)) {
           setAccessKey(savedKey);
           setIsAccessKeyValid(true);
         } else {
-          // If the key was removed from valid keys, clear it from localStorage
+          // If the key is invalid or used by someone else, clear it
           localStorage.removeItem('robocoach-access-key');
           setAccessKey("");
           setIsAccessKeyValid(false);
-          setKeyError("Your access key is no longer valid. Please enter a new key.");
+          if (!isValidAccessKey(savedKey)) {
+            setKeyError("Your access key is no longer valid. Please enter a new key.");
+          } else {
+            setKeyError("This key is already in use by another user!");
+          }
         }
       }
       setLastKeyCheck(Date.now());
     };
 
+    // Validate on initial load
     validateSavedKey();
 
-    // Set up an interval to periodically check if keys have been updated
+    // Set up an interval to periodically check if the key is still valid
     const keyCheckInterval = setInterval(() => {
       // If keysLastUpdated is newer than our last check, revalidate
       if (keysLastUpdated > lastKeyCheck) {
@@ -48,7 +58,25 @@ const App: React.FC = () => {
     }, 5000); // Check every 5 seconds
 
     return () => clearInterval(keyCheckInterval);
-  }, [lastKeyCheck]);
+  }, [lastKeyCheck, accessKey]);
+
+  // Add this useEffect to handle cleanup when user closes the page
+  useEffect(() => {
+    // Function to handle page unload/close
+    const handleUnload = () => {
+      if (accessKey && isValidAccessKey(accessKey)) {
+        releaseKey(accessKey);
+      }
+    };
+
+    // Add event listener for when the user closes the page
+    window.addEventListener('beforeunload', handleUnload);
+
+    // Cleanup function to remove the event listener
+    return () => {
+      window.removeEventListener('beforeunload', handleUnload);
+    };
+  }, [accessKey]);
 
   // Load chats from localStorage on initial render
   useEffect(() => {
@@ -87,7 +115,6 @@ const App: React.FC = () => {
         localStorage.removeItem('robocoach-last-active-chat-id');
     }
   }, [activeChatId]);
-
 
   const handleCreateNewChat = () => {
     if (!apiKeyAvailable) return;
@@ -170,20 +197,34 @@ const App: React.FC = () => {
   }, [activeChatId, chats, apiKeyAvailable]);
 
   const activeChat = chats.find((chat) => chat.id === activeChatId);
-
+  
+  // Modify your handleAccessKeySubmit function
   const handleAccessKeySubmit = () => {
+    if (accessKey.trim() === "") {
+      setKeyError("Please enter an access key");
+      return;
+    }
+  
     setIsSubmitting(true);
-    setKeyError("");
     
     setTimeout(() => {
       if (isValidAccessKey(accessKey)) {
-        setIsAccessKeyValid(true);
+        if (isKeyInUse(accessKey)) {
+          setKeyError("This key is already in use by another user!");
+          setIsSubmitting(false);
+          return;
+        }
+        
+        // Key is valid and not in use
+        markKeyAsInUse(accessKey);
         localStorage.setItem('robocoach-access-key', accessKey);
+        setIsAccessKeyValid(true);
+        setKeyError("");
       } else {
-        setKeyError("Invalid Key!");
-        setIsSubmitting(false);
+        setKeyError("Invalid access key. Please try again.");
       }
-    }, 800); // Add a slight delay for animation effect
+      setIsSubmitting(false);
+    }, 500); // Simulate a short delay for validation
   };
 
   const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
